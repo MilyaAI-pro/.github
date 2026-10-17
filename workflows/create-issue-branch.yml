@@ -1,0 +1,67 @@
+
+name: Create Branch From Issue
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  create-branch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create branch from dev
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issue = context.payload.issue;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const slug = issue.title
+              .toLowerCase()
+              .normalize('NFKD')
+              .replace(/[\u0300-\u036f]/g, '')
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/g, '')
+              .slice(0, 45)
+              .replace(/-+$/g, '');
+
+            const prefix = issue.labels.some(
+              label => label.name === 'bug'
+            ) ? 'fix' : 'feature';
+
+            const branch = `${prefix}/${issue.number}-${slug || 'issue'}`;
+
+            const base = await github.rest.git.getRef({
+              owner,
+              repo,
+              ref: 'heads/dev'
+            });
+
+            try {
+              await github.rest.git.createRef({
+                owner,
+                repo,
+                ref: `refs/heads/${branch}`,
+                sha: base.data.object.sha
+              });
+            } catch (error) {
+              if (error.status === 422) {
+                core.info(`Branch may already exist: ${branch}`);
+                return;
+              }
+              throw error;
+            }
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issue.number,
+              body: `Development branch created from \`dev\`:\n\n\`${branch}\`\n\nOpen a pull request targeting \`dev\` when ready.`
+            });
